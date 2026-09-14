@@ -154,6 +154,56 @@ button.primary {
   font-weight: 600;
 }
 
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+button:disabled:hover {
+  border-color: var(--border);
+}
+
+.view-controls .view-controls-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.view-controls input[type='text'] {
+  width: 90px;
+  padding: 6px 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.view-controls input[type='text']:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.view-range {
+  color: var(--muted);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.view-error {
+  color: var(--clip);
+  font-size: 12.5px;
+  margin-top: 8px;
+}
+
+.view-notice {
+  color: var(--warn);
+  font-size: 12.5px;
+  margin-top: 8px;
+}
+
 .channel-card {
   background: var(--panel);
   border: 1px solid var(--border);

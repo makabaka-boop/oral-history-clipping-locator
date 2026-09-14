@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { loadAndScanWav, type LoadedWav } from './audio/decoder';
 import { ERROR_MESSAGES, WavError, type ClipSegment } from './audio/types';
+import {
+  INVALID_WINDOW_NOTICE,
+  SHORT_RECORDING_NOTICE,
+  fullTrackRange,
+  localViewRange,
+  parseWindowSeconds,
+  type ViewRange
+} from './audio/view-range';
 import Waveform from './components/Waveform';
 import SegmentList from './components/SegmentList';
 
@@ -24,11 +32,21 @@ function formatSeconds(totalSeconds: number): string {
   return totalSeconds.toFixed(3);
 }
 
+const DEFAULT_WINDOW_INPUT = '10';
+
 export default function App() {
   const [status, setStatus] = useState<Status>('idle');
   const [error, setError] = useState<ErrorState | null>(null);
   const [loaded, setLoaded] = useState<LoadedWav | null>(null);
   const [position, setPosition] = useState(0);
+  // 页面唯一视图状态：整轨或局部视窗的起止秒数（由纯函数算出）
+  const [viewRange, setViewRange] = useState<ViewRange | null>(null);
+  const [windowInput, setWindowInput] = useState(DEFAULT_WINDOW_INPUT);
+  const [windowSeconds, setWindowSeconds] = useState(
+    Number(DEFAULT_WINDOW_INPUT)
+  );
+  const [windowError, setWindowError] = useState<string | null>(null);
+  const [viewNotice, setViewNotice] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const objectUrlRef = useRef<string | null>(null);
 
@@ -48,6 +66,12 @@ export default function App() {
       objectUrlRef.current = next.objectUrl;
       setLoaded(next);
       setPosition(0);
+      // 新文件复位视图：整轨显示，视窗秒数回到默认十秒
+      setViewRange(fullTrackRange(next.result.durationSeconds));
+      setWindowInput(DEFAULT_WINDOW_INPUT);
+      setWindowSeconds(Number(DEFAULT_WINDOW_INPUT));
+      setWindowError(null);
+      setViewNotice(null);
       setStatus('done');
     } catch (err) {
       if (err instanceof WavError) {
@@ -83,13 +107,58 @@ export default function App() {
     });
   };
 
-  const locateSegment = (seg: ClipSegment) => seekTo(seg.startSeconds);
+  /**
+   * 以 focusSeconds 为中心切换到局部视窗；
+   * 录音不宽于视窗秒数时回退整轨并提示。
+   */
+  const focusLocalView = (focusSeconds: number, widthSeconds: number) => {
+    if (!loaded) return;
+    const duration = loaded.result.durationSeconds;
+    if (duration <= widthSeconds) {
+      setViewRange(fullTrackRange(duration));
+      setViewNotice(SHORT_RECORDING_NOTICE);
+    } else {
+      setViewRange(localViewRange(duration, widthSeconds, focusSeconds));
+      setViewNotice(null);
+    }
+  };
+
+  const locateSegment = (seg: ClipSegment) => {
+    // 播放器仍跳到段起点，同时各声道同步显示该时刻附近的局部波形
+    seekTo(seg.startSeconds);
+    focusLocalView(seg.startSeconds, windowSeconds);
+  };
 
   const locateFirst = () => {
     if (loaded?.result.firstClip) {
-      seekTo(loaded.result.firstClip.segment.startSeconds);
+      locateSegment(loaded.result.firstClip.segment);
     }
   };
+
+  const applyWindow = () => {
+    if (!loaded) return;
+    const parsed = parseWindowSeconds(windowInput);
+    if (parsed === null) {
+      // 非法输入：不改变当前视图，就地提示
+      setWindowError(INVALID_WINDOW_NOTICE);
+      return;
+    }
+    setWindowError(null);
+    setWindowSeconds(parsed);
+    focusLocalView(position, parsed);
+  };
+
+  const backToFull = () => {
+    if (!loaded) return;
+    setViewRange(fullTrackRange(loaded.result.durationSeconds));
+    setViewNotice(null);
+  };
+
+  const isFullTrack =
+    loaded !== null &&
+    viewRange !== null &&
+    viewRange.startSeconds <= 0 &&
+    viewRange.endSeconds >= loaded.result.durationSeconds;
 
   return (
     <div className="app">
@@ -136,7 +205,7 @@ export default function App() {
         </section>
       )}
 
-      {status === 'done' && loaded && (
+      {status === 'done' && loaded && viewRange && (
         <>
           <section className="panel" data-testid="summary-panel">
             <div>
@@ -211,6 +280,49 @@ export default function App() {
             />
           </section>
 
+          <section className="panel view-controls" data-testid="view-controls">
+            <div className="view-controls-row">
+              <label htmlFor="window-input">局部视窗（秒）：</label>
+              <input
+                id="window-input"
+                data-testid="window-input"
+                type="text"
+                inputMode="decimal"
+                value={windowInput}
+                onChange={(e) => {
+                  setWindowInput(e.target.value);
+                  setWindowError(null);
+                }}
+              />
+              <button onClick={applyWindow} data-testid="apply-window">
+                应用
+              </button>
+              <button
+                onClick={backToFull}
+                data-testid="back-to-full"
+                disabled={isFullTrack}
+              >
+                返回整轨
+              </button>
+              <span className="view-range" data-testid="view-range">
+                当前视窗：{formatSeconds(viewRange.startSeconds)} –{' '}
+                {formatSeconds(viewRange.endSeconds)} s（宽度{' '}
+                {formatSeconds(viewRange.endSeconds - viewRange.startSeconds)}{' '}
+                s）
+              </span>
+            </div>
+            {windowError && (
+              <div className="view-error" data-testid="window-error">
+                {windowError}
+              </div>
+            )}
+            {viewNotice && (
+              <div className="view-notice" data-testid="view-notice">
+                {viewNotice}
+              </div>
+            )}
+          </section>
+
           {loaded.result.channels.map((ch) => (
             <section
               className="channel-card"
@@ -234,6 +346,7 @@ export default function App() {
                 sampleRate={loaded.result.sampleRate}
                 segments={ch.segments}
                 positionSeconds={position}
+                viewRange={viewRange}
                 onSeek={seekTo}
               />
               <div className="legend">
